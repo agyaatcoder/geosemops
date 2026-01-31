@@ -1,0 +1,388 @@
+# GeoSemOps Test Cases
+# Language-agnostic test definitions for all operators
+
+# =============================================================================
+# sem_map tests
+# =============================================================================
+
+- name: sem_map_basic_classification
+  operator: sem_map
+  description: Classify POIs into categories
+  input:
+    relation_data:
+      columns: [id, name, tags]
+      rows:
+        - [1, "Starbucks", "coffee, wifi"]
+        - [2, "Mario's Pizzeria", "pizza, italian, delivery"]
+        - [3, "City Gym", "fitness, weights, cardio"]
+    columns: [name, tags]
+    prompt: "Classify this business.\nName: {{ name }}\nTags: {{ tags }}"
+    output_schema:
+      category: str
+      is_chain: bool
+  mock_llm_responses:
+    - input_contains: "Starbucks"
+      response: {"category": "cafe", "is_chain": true}
+    - input_contains: "Mario's Pizzeria"
+      response: {"category": "restaurant", "is_chain": false}
+    - input_contains: "City Gym"
+      response: {"category": "fitness", "is_chain": false}
+  expected_output:
+    columns: [id, name, tags, category, is_chain]
+    rows:
+      - [1, "Starbucks", "coffee, wifi", "cafe", true]
+      - [2, "Mario's Pizzeria", "pizza, italian, delivery", "restaurant", false]
+      - [3, "City Gym", "fitness, weights, cardio", "fitness", false]
+
+- name: sem_map_with_geometry
+  operator: sem_map
+  description: Enrich POIs including geometry context
+  input:
+    relation_data:
+      columns: [id, name, geom_wkt]
+      rows:
+        - [1, "Beach Cafe", "POINT(-122.4 37.8)"]
+        - [2, "Mountain Lodge", "POINT(-121.9 37.3)"]
+    columns: [name, geom_wkt]
+    prompt: "What type of location is this?\nName: {{ name }}\nLocation: {{ geom_wkt }}"
+    output_schema:
+      location_type: str
+  mock_llm_responses:
+    - input_contains: "Beach Cafe"
+      response: {"location_type": "coastal"}
+    - input_contains: "Mountain Lodge"
+      response: {"location_type": "mountain"}
+  expected_output:
+    columns: [id, name, geom_wkt, location_type]
+    rows:
+      - [1, "Beach Cafe", "POINT(-122.4 37.8)", "coastal"]
+      - [2, "Mountain Lodge", "POINT(-121.9 37.3)", "mountain"]
+
+- name: sem_map_numeric_output
+  operator: sem_map
+  description: Extract numeric values from text
+  input:
+    relation_data:
+      columns: [id, description]
+      rows:
+        - [1, "Open 9am to 5pm, seats 50 guests"]
+        - [2, "24 hour diner, capacity 120"]
+    columns: [description]
+    prompt: "Extract capacity from: {{ description }}"
+    output_schema:
+      capacity: int
+      is_24h: bool
+  mock_llm_responses:
+    - input_contains: "seats 50"
+      response: {"capacity": 50, "is_24h": false}
+    - input_contains: "capacity 120"
+      response: {"capacity": 120, "is_24h": true}
+  expected_output:
+    columns: [id, description, capacity, is_24h]
+    rows:
+      - [1, "Open 9am to 5pm, seats 50 guests", 50, false]
+      - [2, "24 hour diner, capacity 120", 120, true]
+
+- name: sem_map_empty_input
+  operator: sem_map
+  description: Handle empty input relation
+  input:
+    relation_data:
+      columns: [id, name]
+      rows: []
+    columns: [name]
+    prompt: "Classify: {{ name }}"
+    output_schema:
+      category: str
+  mock_llm_responses: []
+  expected_output:
+    columns: [id, name, category]
+    rows: []
+
+# =============================================================================
+# sem_filter tests
+# =============================================================================
+
+- name: sem_filter_basic
+  operator: sem_filter
+  description: Filter POIs by semantic condition
+  input:
+    relation_data:
+      columns: [id, name, description]
+      rows:
+        - [1, "Joe's Coffee", "Cozy cafe with espresso and pastries"]
+        - [2, "Burger Palace", "Fast food restaurant with burgers"]
+        - [3, "Tea House", "Traditional tea service and light snacks"]
+    columns: [name, description]
+    predicate: "This is a place that primarily serves coffee or tea"
+  mock_llm_responses:
+    - input_contains: "Joe's Coffee"
+      response: true
+    - input_contains: "Burger Palace"
+      response: false
+    - input_contains: "Tea House"
+      response: true
+  expected_output:
+    columns: [id, name, description]
+    rows:
+      - [1, "Joe's Coffee", "Cozy cafe with espresso and pastries"]
+      - [3, "Tea House", "Traditional tea service and light snacks"]
+
+- name: sem_filter_with_template
+  operator: sem_filter
+  description: Filter using Jinja2 template in predicate
+  input:
+    relation_data:
+      columns: [id, name, capacity, has_parking]
+      rows:
+        - [1, "Central Park", 5000, true]
+        - [2, "Tiny Garden", 50, false]
+        - [3, "Stadium Field", 10000, true]
+    columns: [name, capacity, has_parking]
+    predicate: "{{ name }} with capacity {{ capacity }} and parking={{ has_parking }} is suitable for large events"
+  mock_llm_responses:
+    - input_contains: "Central Park"
+      response: true
+    - input_contains: "Tiny Garden"
+      response: false
+    - input_contains: "Stadium Field"
+      response: true
+  expected_output:
+    columns: [id, name, capacity, has_parking]
+    rows:
+      - [1, "Central Park", 5000, true]
+      - [3, "Stadium Field", 10000, true]
+
+- name: sem_filter_all_false
+  operator: sem_filter
+  description: Filter returns empty when all fail
+  input:
+    relation_data:
+      columns: [id, name]
+      rows:
+        - [1, "Gas Station"]
+        - [2, "Auto Shop"]
+    columns: [name]
+    predicate: "This is a restaurant"
+  mock_llm_responses:
+    - input_contains: "Gas Station"
+      response: false
+    - input_contains: "Auto Shop"
+      response: false
+  expected_output:
+    columns: [id, name]
+    rows: []
+
+# =============================================================================
+# sem_match tests
+# =============================================================================
+
+- name: sem_match_basic
+  operator: sem_match
+  description: Match POI pairs from different sources
+  input:
+    relation_data:
+      columns: [pair_id, left_name, left_addr, right_name, right_addr, distance_m]
+      rows:
+        - [1, "Starbucks Coffee", "123 Main St", "Starbucks", "123 Main Street", 5]
+        - [2, "Starbucks Coffee", "123 Main St", "Pete's Diner", "500 Oak Ave", 200]
+        - [3, "City Library", "100 Center Blvd", "Central Library", "100 Center Boulevard", 10]
+    left_columns: [left_name, left_addr]
+    right_columns: [right_name, right_addr, distance_m]
+    comparison_prompt: |
+      Compare these records:
+      Record 1: {{ left.left_name }} at {{ left.left_addr }}
+      Record 2: {{ right.right_name }} at {{ right.right_addr }}
+      Distance: {{ right.distance_m }}m
+      Are they the same place?
+  mock_llm_responses:
+    - input_contains: "Starbucks Coffee"
+      input_contains_also: "Starbucks"
+      input_not_contains: "Pete's Diner"
+      response: {"is_match": true, "confidence": 0.95}
+    - input_contains: "Pete's Diner"
+      response: {"is_match": false, "confidence": 0.9}
+    - input_contains: "City Library"
+      response: {"is_match": true, "confidence": 0.85}
+  expected_output:
+    columns: [pair_id, left_name, left_addr, right_name, right_addr, distance_m, is_match, match_confidence]
+    rows:
+      - [1, "Starbucks Coffee", "123 Main St", "Starbucks", "123 Main Street", 5, true, 0.95]
+      - [2, "Starbucks Coffee", "123 Main St", "Pete's Diner", "500 Oak Ave", 200, false, 0.9]
+      - [3, "City Library", "100 Center Blvd", "Central Library", "100 Center Boulevard", 10, true, 0.85]
+
+- name: sem_match_no_matches
+  operator: sem_match
+  description: No pairs match
+  input:
+    relation_data:
+      columns: [left_name, right_name]
+      rows:
+        - ["Coffee Shop", "Hardware Store"]
+        - ["Pizza Place", "Bank"]
+    left_columns: [left_name]
+    right_columns: [right_name]
+    comparison_prompt: "Are {{ left.left_name }} and {{ right.right_name }} the same?"
+  mock_llm_responses:
+    - input_contains: "Coffee Shop"
+      response: {"is_match": false, "confidence": 0.99}
+    - input_contains: "Pizza Place"
+      response: {"is_match": false, "confidence": 0.99}
+  expected_output:
+    columns: [left_name, right_name, is_match, match_confidence]
+    rows:
+      - ["Coffee Shop", "Hardware Store", false, 0.99]
+      - ["Pizza Place", "Bank", false, 0.99]
+
+# =============================================================================
+# sem_resolve tests
+# =============================================================================
+
+- name: sem_resolve_basic
+  operator: sem_resolve
+  description: Resolve duplicate POIs into canonical entities
+  input:
+    relation_data:
+      columns: [id, source, name, address]
+      rows:
+        - [1, "osm", "Starbucks", "123 Main St"]
+        - [2, "city", "Starbucks Coffee", "123 Main Street"]
+        - [3, "osm", "City Library", "500 Oak Ave"]
+        - [4, "city", "Public Library", "500 Oak Avenue"]
+        - [5, "osm", "Unique Cafe", "999 Solo Blvd"]
+    blocking_keys: [name, address]
+    blocking_threshold: 0.6
+    comparison_prompt: |
+      Are these the same place?
+      1: {{ input1.name }} at {{ input1.address }}
+      2: {{ input2.name }} at {{ input2.address }}
+    resolution_prompt: |
+      Merge these into one canonical record:
+      {% for r in inputs %}
+      - {{ r.name }} | {{ r.address }} | {{ r.source }}
+      {% endfor %}
+    output_schema:
+      name: str
+      address: str
+  mock_blocking_pairs:
+    # Pairs that pass blocking threshold
+    - [1, 2]  # Starbucks variants
+    - [3, 4]  # Library variants
+  mock_llm_responses:
+    # Matching phase
+    - input_contains: "Starbucks"
+      input_contains_also: "Starbucks Coffee"
+      response: {"is_match": true, "confidence": 0.95}
+    - input_contains: "City Library"
+      input_contains_also: "Public Library"
+      response: {"is_match": true, "confidence": 0.88}
+    # Resolution phase
+    - input_contains: "Merge"
+      input_contains_also: "Starbucks"
+      response: {"name": "Starbucks", "address": "123 Main Street"}
+    - input_contains: "Merge"
+      input_contains_also: "Library"
+      response: {"name": "City Library", "address": "500 Oak Avenue"}
+    - input_contains: "Unique Cafe"
+      response: {"name": "Unique Cafe", "address": "999 Solo Blvd"}
+  expected_entities:
+    columns: [entity_id, name, address]
+    rows:
+      - [1, "Starbucks", "123 Main Street"]
+      - [2, "City Library", "500 Oak Avenue"]
+      - [3, "Unique Cafe", "999 Solo Blvd"]
+  expected_membership:
+    columns: [original_id, entity_id]
+    rows:
+      - [1, 1]
+      - [2, 1]
+      - [3, 2]
+      - [4, 2]
+      - [5, 3]
+
+- name: sem_resolve_no_duplicates
+  operator: sem_resolve
+  description: All records are unique
+  input:
+    relation_data:
+      columns: [id, name, address]
+      rows:
+        - [1, "Coffee Shop", "100 A St"]
+        - [2, "Pizza Place", "200 B St"]
+        - [3, "Book Store", "300 C St"]
+    blocking_keys: [name]
+    blocking_threshold: 0.8
+    comparison_prompt: "Same place? {{ input1.name }} vs {{ input2.name }}"
+    resolution_prompt: "Canonical: {{ inputs[0].name }}"
+    output_schema:
+      name: str
+      address: str
+  mock_blocking_pairs: []  # No pairs pass blocking
+  mock_llm_responses:
+    - input_contains: "Coffee Shop"
+      response: {"name": "Coffee Shop", "address": "100 A St"}
+    - input_contains: "Pizza Place"
+      response: {"name": "Pizza Place", "address": "200 B St"}
+    - input_contains: "Book Store"
+      response: {"name": "Book Store", "address": "300 C St"}
+  expected_entities:
+    columns: [entity_id, name, address]
+    rows:
+      - [1, "Coffee Shop", "100 A St"]
+      - [2, "Pizza Place", "200 B St"]
+      - [3, "Book Store", "300 C St"]
+  expected_membership:
+    columns: [original_id, entity_id]
+    rows:
+      - [1, 1]
+      - [2, 2]
+      - [3, 3]
+
+# =============================================================================
+# Error handling tests
+# =============================================================================
+
+- name: sem_map_llm_failure_graceful
+  operator: sem_map
+  description: Handle LLM failure gracefully with null
+  input:
+    relation_data:
+      columns: [id, name]
+      rows:
+        - [1, "Good Place"]
+        - [2, "Problem Place"]
+    columns: [name]
+    prompt: "Classify: {{ name }}"
+    output_schema:
+      category: str
+  mock_llm_responses:
+    - input_contains: "Good Place"
+      response: {"category": "restaurant"}
+    - input_contains: "Problem Place"
+      response: null  # LLM failure
+  expected_output:
+    columns: [id, name, category]
+    rows:
+      - [1, "Good Place", "restaurant"]
+      - [2, "Problem Place", null]
+
+- name: sem_filter_llm_failure_excludes
+  operator: sem_filter
+  description: LLM failure in filter excludes row
+  input:
+    relation_data:
+      columns: [id, name]
+      rows:
+        - [1, "Cafe"]
+        - [2, "Error Place"]
+    columns: [name]
+    predicate: "Is this a cafe?"
+  mock_llm_responses:
+    - input_contains: "Cafe"
+      response: true
+    - input_contains: "Error Place"
+      response: null  # LLM failure -> treated as false
+  expected_output:
+    columns: [id, name]
+    rows:
+      - [1, "Cafe"]
