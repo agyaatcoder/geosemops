@@ -2,51 +2,16 @@
 
 **Semantic Operators for LLM-Powered Geospatial Data Processing**
 
-GeoSemOps is a library with no code—just specs and tests.
+GIS tools excel at geometry. LLMs excel at meaning. GeoSemOps bridges the gap.
 
-## What?
-
-This repo contains:
-
-- **[SPEC.md](SPEC.md)** — Detailed behavior specification
-- **[tests.yaml](tests.yaml)** — Language-agnostic test cases
-- **[INSTALL.md](INSTALL.md)** — Build instructions (a prompt)
-
-You "install" GeoSemOps by asking an AI to implement it. The spec is tight enough that Claude, Codex, Cursor, or similar agents can build a working implementation in one shot.
-
-## Why?
-
-GIS tools excel at geometry. LLMs excel at meaning. GeoSemOps bridges the gap with four semantic operators:
-
-| Operator | Purpose |
-|----------|---------|
-| `sem_map` | Enrich each row with LLM-generated columns |
-| `sem_filter` | Filter rows using natural language conditions |
-| `sem_match` | Compare pairs to find matching entities |
-| `sem_resolve` | Full entity resolution pipeline |
-
-## Quick Start
-
-Paste into Claude Code, Cursor, or your AI coding agent:
-
-```
-Implement the geosemops library in Python.
-
-1. Read SPEC.md for complete behavior specification
-2. Parse tests.yaml and generate pytest test files
-3. Implement all four operators: sem_map, sem_filter, sem_match, sem_resolve
-4. Run tests until all pass
-5. Place implementation in src/geosemops/
-```
-
-Then use it:
+## Quick Example
 
 ```python
 import geosemops as gso
 
 db = gso.connect("pois.duckdb")
 
-# Normalize POI categories
+# Normalize messy POI categories
 enriched = db.sem_map(
     relation="SELECT * FROM raw_pois",
     columns=["name", "tags"],
@@ -54,50 +19,66 @@ enriched = db.sem_map(
     output_schema={"category": str, "is_chain": bool}
 )
 
-# Filter to actual cafes
+# Filter to actual cafes (not restaurants serving coffee)
 cafes = db.sem_filter(
     relation=enriched,
     columns=["name", "category"],
-    predicate="This is a true cafe, not a restaurant that happens to serve coffee"
+    predicate="This is a true cafe, not a restaurant"
+)
+
+# Resolve duplicates across OSM + city data
+entities, membership = db.sem_resolve(
+    relation="SELECT * FROM all_pois",
+    blocking_keys=["name"],
+    spatial_blocking={"geom": "geometry", "max_distance_m": 50},
+    comparison_prompt="Are these the same place? ...",
+    resolution_prompt="Merge into canonical record: ..."
 )
 ```
 
-## Why Spec-Driven?
+## Operators
 
-Inspired by [whenwords](https://dbreunig.com/2025/01/08/software-library-with-no-code.html):
+| Operator | Purpose |
+|----------|---------|
+| `sem_map` | Enrich each row with LLM-generated columns |
+| `sem_filter` | Filter rows using natural language conditions |
+| `sem_match` | Compare pairs to find matching entities |
+| `sem_resolve` | Full entity resolution: blocking → matching → clustering → canonicalization |
 
-> "Do we need many language-specific implementations? Or do we need one tightly defined set of rules which we implement on demand?"
+## Installation
 
-For simple utilities, the answer might be: just ship the spec.
+```bash
+pip install geosemops
+```
 
-GeoSemOps is more complex than whenwords (4 operators, DuckDB integration, embeddings), but the principle holds. The spec is ~500 lines. Tests are exhaustive. AI agents can implement it reliably.
+Requires Python 3.10+ and an LLM API key:
 
-### When this works
+```bash
+export OPENAI_API_KEY="sk-..."
+```
 
-- ✅ Well-defined behavior (semantic operators have clear inputs/outputs)
-- ✅ Standard dependencies (DuckDB, LiteLLM are cross-language)
-- ✅ Testing is straightforward (mock LLM, check outputs)
+## Why GeoSemOps?
 
-### When this doesn't work
+- **DuckDB-native** — SQL-composable, not a new paradigm
+- **Spatial-first** — Geometry is a first-class citizen
+- **Inspectable** — Prompts visible, blocking explicit
+- **Minimal API** — Four operators handle 90% of use cases
 
-- ❌ Performance-critical code (you want battle-tested implementations)
-- ❌ Complex state management (specs get unwieldy)
-- ❌ Needs ongoing security updates (you want a maintained codebase)
+See [INTENT.md](INTENT.md) for the full reasoning behind the design.
 
-## Design
+## Documentation
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the full design specification including:
-
-- Architecture and operator details
-- Comparison with LOTUS and DocETL
-- Implementation roadmap
-- Open questions
+| Document | Purpose |
+|----------|---------|
+| [INTENT.md](INTENT.md) | Why this library exists, design decisions |
+| [SPEC.md](SPEC.md) | Detailed behavior specification |
+| [docs/DESIGN.md](docs/DESIGN.md) | Architecture and implementation details |
+| [tests.yaml](tests.yaml) | Test cases as data |
 
 ## Inspiration
 
 - [LOTUS](https://github.com/stanford-futuredata/lotus) — Semantic operators for DataFrames
 - [DocETL](https://github.com/ucbepic/docetl) — LLM-powered document processing
-- [whenwords](https://github.com/dbreunig/whenwords) — The spec-only library concept
 
 ## License
 
